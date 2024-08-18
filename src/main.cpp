@@ -24,9 +24,6 @@
 // #include <GFX.h>
 
 #include <GxEPD2_BW.h>
-#include <GxEPD2_3C.h>
-#include <GxEPD2_4C.h>
-#include <GxEPD2_7C.h>
 // #include <Fonts/FreeSansBold24pt7b.h>
 #include <../fonts/RobotoCondensed_Bold48pt7b.h>
 #include <../fonts/Roboto_Regular10pt7b.h>
@@ -96,8 +93,8 @@ void write_temp(float temp)
 
 void setup()
 {
-    // display.init(115200); // default 10ms reset pulse, e.g. for bare panels with DESPI-C02
-    display.init(115200, true, 2, false); // USE THIS for Waveshare boards with "clever" reset circuit, 2ms reset pulse
+    display.init(115200); // default 10ms reset pulse, e.g. for bare panels with DESPI-C02
+    // display.init(115200, true, 2, false); // USE THIS for Waveshare boards with "clever" reset circuit, 2ms reset pulse
     write_temp(20.4f);
     display.hibernate();
 }
