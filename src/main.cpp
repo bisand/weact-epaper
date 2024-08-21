@@ -1,50 +1,36 @@
-// GxEPD2_HelloWorld.ino by Jean-Marc Zingg
-//
-// Display Library example for SPI e-paper panels from Dalian Good Display and boards from Waveshare.
-// Requires HW SPI and Adafruit_GFX. Caution: the e-paper panels require 3.3V supply AND data lines!
-//
-// Display Library based on Demo Example from Good Display: https://www.good-display.com/companyfile/32/
-//
-// Author: Jean-Marc Zingg
-//
-// Version: see library.properties
-//
-// Library: https://github.com/ZinggJM/GxEPD2
-
-// Supporting Arduino Forum Topics (closed, read only):
-// Good Display ePaper for Arduino: https://forum.arduino.cc/t/good-display-epaper-for-arduino/419657
-// Waveshare e-paper displays with SPI: https://forum.arduino.cc/t/waveshare-e-paper-displays-with-spi/467865
-//
-// Add new topics in https://forum.arduino.cc/c/using-arduino/displays/23 for new questions and issues
-
-// see GxEPD2_wiring_examples.h for wiring suggestions and examples
-// if you use a different wiring, you need to adapt the constructor parameters!
-
-// uncomment next line to use class GFX of library GFX_Root instead of Adafruit_GFX
-// #include <GFX.h>
+// base class GxEPD2_GFX can be used to pass references or pointers to the display instance as parameter, uses ~1.2k more code
+// enable or disable GxEPD2_GFX base class
+#define ENABLE_GxEPD2_GFX 0
 
 #include <GxEPD2_BW.h>
 // #include <Fonts/FreeSansBold24pt7b.h>
 #include <../fonts/RobotoCondensed_Bold48pt7b.h>
 #include <../fonts/Roboto_Regular10pt7b.h>
 
-// select the display class and display driver class in the following file (new style):
-#include "GxEPD2_display_selection_new_style.h"
+// ESP32 CS(SS)=5,SCL(SCK)=18,SDA(MOSI)=23,BUSY=15,RES(RST)=2,DC=0
+#define CS 5
+#define RES 16
+#define DC 17
+#define BUSY 4
 
-// or select the display constructor line in one of the following files (old style):
-// #include "GxEPD2_display_selection.h"
-// #include "GxEPD2_display_selection_added.h"
+// 1.54'' EPD Module
+// GxEPD2_BW<GxEPD2_154_D67, GxEPD2_154_D67::HEIGHT> display(GxEPD2_154_D67(/*CS=5*/ 5, /*DC=*/ 0, /*RES=*/ 2, /*BUSY=*/ 15)); // GDEH0154D67 200x200, SSD1681
 
-// alternately you can copy the constructor from GxEPD2_display_selection.h or GxEPD2_display_selection_added.h to here
-// e.g. for Wemos D1 mini:
-// GxEPD2_BW<GxEPD2_154_D67, GxEPD2_154_D67::HEIGHT> display(GxEPD2_154_D67(/*CS=D8*/ SS, /*DC=D3*/ 0, /*RST=D4*/ 2, /*BUSY=D2*/ 4)); // GDEH0154D67
+// 2.13'' EPD Module
+GxEPD2_BW<GxEPD2_213_BN, GxEPD2_213_BN::HEIGHT> display(GxEPD2_213_BN(CS, DC, RES, BUSY)); // DEPG0213BN 122x250, SSD1680
+// GxEPD2_3C<GxEPD2_213_Z98c, GxEPD2_213_Z98c::HEIGHT> display(GxEPD2_213_Z98c(/*CS=5*/ 5, /*DC=*/ 0, /*RES=*/ 2, /*BUSY=*/ 15)); // GDEY0213Z98 122x250, SSD1680
 
-// for handling alternative SPI pins (ESP32, RP2040) see example GxEPD2_Example.ino
+// 2.9'' EPD Module
+// GxEPD2_BW<GxEPD2_290_BS, GxEPD2_290_BS::HEIGHT> display(GxEPD2_290_BS(/*CS=5*/ 5, /*DC=*/ 0, /*RES=*/ 2, /*BUSY=*/ 15)); // DEPG0290BS 128x296, SSD1680
+// GxEPD2_3C<GxEPD2_290_C90c, GxEPD2_290_C90c::HEIGHT> display(GxEPD2_290_C90c(/*CS=5*/ 5, /*DC=*/ 0, /*RES=*/ 2, /*BUSY=*/ 15)); // GDEM029C90 128x296, SSD1680
+
+// 4.2'' EPD Module
+// GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(/*CS=5*/ 5, /*DC=*/ 0, /*RES=*/ 2, /*BUSY=*/ 15)); // 400x300, SSD1683
 
 void write_temp(float temp)
 {
     const char *info_text = "Siste: 2024-08-09 17:18:42";
-    char temp_text[10];                  // Make sure this is large enough to hold the formatted string
+    char temp_text[10];                 // Make sure this is large enough to hold the formatted string
     sprintf(temp_text, "%.1f C", temp); // Convert float to string with 1 decimal places
 
     // Replace the decimal point with a comma
@@ -93,8 +79,8 @@ void write_temp(float temp)
 
 void setup()
 {
-    display.init(115200); // default 10ms reset pulse, e.g. for bare panels with DESPI-C02
-    // display.init(115200, true, 2, false); // USE THIS for Waveshare boards with "clever" reset circuit, 2ms reset pulse
+    // display.init(115200); // default 10ms reset pulse, e.g. for bare panels with DESPI-C02
+    display.init(115200, true, 50, false);
     write_temp(20.4f);
     display.hibernate();
 }
