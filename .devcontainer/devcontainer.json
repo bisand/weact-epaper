@@ -24,7 +24,7 @@
 		}
 	},
 	"forwardPorts": [
-		45047
+		45048
 	],
 	"mounts": [
 		"source=/dev/,target=/dev/,type=bind,consistency=consistent"

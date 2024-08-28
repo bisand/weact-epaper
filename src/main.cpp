@@ -1,88 +1,143 @@
-// base class GxEPD2_GFX can be used to pass references or pointers to the display instance as parameter, uses ~1.2k more code
-// enable or disable GxEPD2_GFX base class
-#define ENABLE_GxEPD2_GFX 0
+/*
+  RadioLib SX126x Blocking Transmit Example
 
-#include <GxEPD2_BW.h>
-// #include <Fonts/FreeSansBold24pt7b.h>
-#include <../fonts/RobotoCondensed_Bold48pt7b.h>
-#include <../fonts/Roboto_Regular10pt7b.h>
+  This example transmits packets using SX1262 LoRa radio module.
+  Each packet contains up to 256 bytes of data, in the form of:
+  - Arduino String
+  - null-terminated char array (C-string)
+  - arbitrary binary data (byte array)
 
-// ESP32 CS(SS)=5,SCL(SCK)=18,SDA(MOSI)=23,BUSY=15,RES(RST)=2,DC=0
-#define CS 5
-#define RES 16
-#define DC 17
-#define BUSY 4
+  Other modules from SX126x family can also be used.
 
-// 1.54'' EPD Module
-// GxEPD2_BW<GxEPD2_154_D67, GxEPD2_154_D67::HEIGHT> display(GxEPD2_154_D67(/*CS=5*/ 5, /*DC=*/ 0, /*RES=*/ 2, /*BUSY=*/ 15)); // GDEH0154D67 200x200, SSD1681
+  Using blocking transmit is not recommended, as it will lead
+  to inefficient use of processor time!
+  Instead, interrupt transmit is recommended.
 
-// 2.13'' EPD Module
-GxEPD2_BW<GxEPD2_213_BN, GxEPD2_213_BN::HEIGHT> display(GxEPD2_213_BN(CS, DC, RES, BUSY)); // DEPG0213BN 122x250, SSD1680
-// GxEPD2_3C<GxEPD2_213_Z98c, GxEPD2_213_Z98c::HEIGHT> display(GxEPD2_213_Z98c(/*CS=5*/ 5, /*DC=*/ 0, /*RES=*/ 2, /*BUSY=*/ 15)); // GDEY0213Z98 122x250, SSD1680
+  For default module settings, see the wiki page
+  https://github.com/jgromes/RadioLib/wiki/Default-configuration#sx126x---lora-modem
 
-// 2.9'' EPD Module
-// GxEPD2_BW<GxEPD2_290_BS, GxEPD2_290_BS::HEIGHT> display(GxEPD2_290_BS(/*CS=5*/ 5, /*DC=*/ 0, /*RES=*/ 2, /*BUSY=*/ 15)); // DEPG0290BS 128x296, SSD1680
-// GxEPD2_3C<GxEPD2_290_C90c, GxEPD2_290_C90c::HEIGHT> display(GxEPD2_290_C90c(/*CS=5*/ 5, /*DC=*/ 0, /*RES=*/ 2, /*BUSY=*/ 15)); // GDEM029C90 128x296, SSD1680
+  For full API reference, see the GitHub Pages
+  https://jgromes.github.io/RadioLib/
+*/
 
-// 4.2'' EPD Module
-// GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(/*CS=5*/ 5, /*DC=*/ 0, /*RES=*/ 2, /*BUSY=*/ 15)); // 400x300, SSD1683
+// include the library
+#include <RadioLib.h>
 
-void write_temp(float temp)
-{
-    const char *info_text = "Siste: 2024-08-09 17:18:42";
-    char temp_text[10];                 // Make sure this is large enough to hold the formatted string
-    sprintf(temp_text, "%.1f C", temp); // Convert float to string with 1 decimal places
+// NodeMCU (ESP8266) <-> SX1262 LoRa Module
+// D5 (GPIO14) <-> SCK
+// D6 (GPIO12) <-> MISO
+// D7 (GPIO13) <-> MOSI
+// D8 (GPIO15) <-> NSS (Chip Select)
+// D2 (GPIO4) <-> RST
+// D0 (GPIO16) <-> DIO1
+// D1 (GPIO5) <-> BUSY
 
-    // Replace the decimal point with a comma
-    char *comma_pos = strchr(temp_text, '.');
-    if (comma_pos)
-    {
-        *comma_pos = ','; // Replace '.' with ','
-    }
+// SX1262 has the following connections:
+// NSS pin: 15 -> D8
+// DIO1 pin: 16 -> D0
+// NRST pin: 4 -> D2
+// BUSY pin: 5 -> D1
+SX1262 radio = new Module(D8, D0, D2, D1);
 
-    display.setRotation(1);
-    display.setTextColor(GxEPD_BLACK);
+// or using RadioShield
+// https://github.com/jgromes/RadioShield
+// SX1262 radio = RadioShield.ModuleA;
 
-    display.setFont(&RobotoCondensed_Bold48pt7b);
-    int16_t tb1_x, tb1_y;
-    uint16_t tb1_w, tb1_h;
-    display.getTextBounds(temp_text, 0, 0, &tb1_x, &tb1_y, &tb1_w, &tb1_h);
-    // center the bounding box by transposition of the origin:
-    uint16_t x1 = ((display.width() - tb1_w) / 2) - tb1_x;
-    uint16_t y1 = tb1_h - 15;
+// or using CubeCell
+// SX1262 radio = new Module(RADIOLIB_BUILTIN_MODULE);
 
-    display.setFont(&Roboto_Regular10pt7b);
-    int16_t tb2_x, tb2_y;
-    uint16_t tb2_w, tb2_h;
-    display.getTextBounds(info_text, 0, 0, &tb2_x, &tb2_y, &tb2_w, &tb2_h);
-    // center the bounding box by transposition of the origin:
-    uint16_t x2 = ((display.width() - tb2_w) / 2) - tb2_x;
-    uint16_t y2 = display.height() - 5;
-
-    display.setFullWindow();
-    display.firstPage();
-    do
-    {
-        display.fillScreen(GxEPD_WHITE);
-        // display.writeFastHLine(0, 0, display.width(), GxEPD_BLACK);
-        // display.writeFastHLine(0, display.height() - 1, display.width(), GxEPD_BLACK);
-        // display.writeFastVLine(0, 0, display.height(), GxEPD_BLACK);
-        // display.writeFastVLine(display.width() - 1, 0, display.height(), GxEPD_BLACK);
-        display.setCursor(x1, y1);
-        display.setFont(&RobotoCondensed_Bold48pt7b);
-        display.print(temp_text);
-        display.setFont(&Roboto_Regular10pt7b);
-        display.setCursor(x2, y2);
-        display.print(info_text);
-    } while (display.nextPage());
-}
+float lora_sx1262_freq = 868.0F;
+float lora_sx1262_bw = 8.0F;
+uint8_t lora_sx1262_sf = 12U;
+uint8_t lora_sx1262_cr = 5U;
+uint8_t lora_sx1262_syncWord = 0x3444U;
+int8_t lora_sx1262_power = 22;
+uint16_t lora_sx1262_preambleLength = 12UL;
+float lora_sx1262_tcxoVoltage = 1.8F;
+bool lora_sx1262_useRegulatorLDO = false;
 
 void setup()
 {
-    // display.init(115200); // default 10ms reset pulse, e.g. for bare panels with DESPI-C02
-    display.init(115200, true, 50, false);
-    write_temp(20.4f);
-    display.hibernate();
+    Serial.begin(9600);
+
+    // initialize SX1262 with default settings
+    Serial.print(F("[SX1262] Initializing ... "));
+
+    int state = RADIOLIB_ERR_UNKNOWN;
+
+    Serial.print(F("TXCO voltage: "));
+    Serial.print(lora_sx1262_tcxoVoltage);
+    Serial.println(F("V ... "));
+    state = radio.begin(lora_sx1262_freq, lora_sx1262_bw, lora_sx1262_sf, lora_sx1262_cr, lora_sx1262_syncWord, lora_sx1262_power, lora_sx1262_preambleLength, lora_sx1262_tcxoVoltage, lora_sx1262_useRegulatorLDO);
+
+    if (state == RADIOLIB_ERR_NONE)
+    {
+        Serial.println(F("success!"));
+    }
+    else
+    {
+        Serial.print(F("failed, code "));
+        Serial.println(state);
+        // while (true)
+        //     ;
+    }
+
+    // some modules have an external RF switch
+    // controlled via two pins (RX enable, TX enable)
+    // to enable automatic control of the switch,
+    // call the following method
+    // RX enable:   4
+    // TX enable:   5
+    /*
+      radio.setRfSwitchPins(4, 5);
+    */
 }
 
-void loop() {};
+// counter to keep track of transmitted packets
+int count = 0;
+
+void loop()
+{
+    Serial.print(F("[SX1262] Transmitting packet ... "));
+
+    // you can transmit C-string or Arduino string up to
+    // 256 characters long
+    String str = "Hello World! #" + String(count++);
+    int state = radio.transmit(str);
+
+    // you can also transmit byte array up to 256 bytes long
+    /*
+      byte byteArr[] = {0x01, 0x23, 0x45, 0x56, 0x78, 0xAB, 0xCD, 0xEF};
+      int state = radio.transmit(byteArr, 8);
+    */
+
+    if (state == RADIOLIB_ERR_NONE)
+    {
+        // the packet was successfully transmitted
+        Serial.println(F("success!"));
+
+        // print measured data rate
+        Serial.print(F("[SX1262] Datarate:\t"));
+        Serial.print(radio.getDataRate());
+        Serial.println(F(" bps"));
+    }
+    else if (state == RADIOLIB_ERR_PACKET_TOO_LONG)
+    {
+        // the supplied packet was longer than 256 bytes
+        Serial.println(F("too long!"));
+    }
+    else if (state == RADIOLIB_ERR_TX_TIMEOUT)
+    {
+        // timeout occured while transmitting packet
+        Serial.println(F("timeout!"));
+    }
+    else
+    {
+        // some other error occurred
+        Serial.print(F("failed, code "));
+        Serial.println(state);
+    }
+
+    // wait for a second before transmitting again
+    delay(1000);
+}
