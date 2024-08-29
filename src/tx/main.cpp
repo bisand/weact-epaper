@@ -47,7 +47,7 @@ SX1262 radio = new Module(D8, D0, D2, D1);
 // SX1262 radio = new Module(RADIOLIB_BUILTIN_MODULE);
 
 float lora_sx1262_freq = 868.0F;
-float lora_sx1262_bw = 8.0F;
+float lora_sx1262_bw = 31.25F;
 uint8_t lora_sx1262_sf = 12U;
 uint8_t lora_sx1262_cr = 5U;
 uint8_t lora_sx1262_syncWord = 0x3444U;
