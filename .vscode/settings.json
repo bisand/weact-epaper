@@ -1,4 +1,13 @@
 {
     "platformio-ide.pioHomeServerHttpHost": "0.0.0.0",
-    "platformio-ide.pioHomeServerHttpPort": 45048
+    "platformio-ide.pioHomeServerHttpPort": 45048,
+    "files.associations": {
+        "*.desktop": "ini",
+        "array": "cpp",
+        "string": "cpp",
+        "string_view": "cpp",
+        "ranges": "cpp",
+        "chrono": "cpp",
+        "ctime": "cpp"
+    }
 }
