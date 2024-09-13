@@ -228,18 +228,23 @@ void initRF()
     // preamble length:             20 symbols
     uint16_t preambleLength = 20;
 
+    if (!radio.begin())
+    { // Initialize radio
+        Serial.println("Failed to initialize radio.");
+    }
+
     // FREQUENCY - Set frequency to 902Mhz (default 915Mhz)
-    radio.configSetFrequency(902000000); // Freq in Hz. Must comply with your local radio regulations
+    radio.configSetFrequency(868000000); // Freq in Hz. Must comply with your local radio regulations
 
     // BANDWIDTH - Set bandwidth to 250khz (default 500khz)
-    radio.configSetBandwidth(5); // 0=7.81khz, 5=200khz, 6=500khz. See documentation for more
+    radio.configSetBandwidth(0x01); // 0=7.81khz, 5=200khz, 6=500khz. See documentation for more
 
     // CODING RATE - Set the coding rate to CR_4_6
     radio.configSetCodingRate(2); // 1-4 = coding rate CR_4_5, CR_4_6, CR_4_7, and CR_4_8 respectively
 
     // SPREADING FACTOR - Set the spreading factor to SF12.  (default is SF7)
     radio.configSetSpreadingFactor(12); // 5-12 are valid ranges.  5 is fast and short range, 12 is slow and long range
-
+    // radio.configSetPreset(PRESET_LONGRANGE);
     // int16_t state = lora.begin(freq, bw, sf, cr, syncWord, power, preambleLength);
     // if (state == RADIOLIB_ERR_NONE)
     // {
@@ -259,6 +264,7 @@ void initRF()
     // }
 
     // radio.setOutputPower(rfPower);
+    Serial.println(F("Radio initialized."));
 }
 
 void setup()
@@ -319,9 +325,8 @@ void loop()
         // int16_t state = lora.transmit(dataPtr, sizeof(LoRaMessage));
         // int16_t state = lora.transmit(message);
         radio.transmit(dataPtr, sizeof(LoRaMessage));
-        int bytesRead = radio.lora_receive_async((uint8_t *)&loraMessage, sizeof(LoRaMessage));
 
-        if (state == RADIOLIB_ERR_NONE)
+        // if (state == RADIOLIB_ERR_NONE)
         {
             Serial.println("Message sent successfully, waiting for ACK...");
 
@@ -329,11 +334,12 @@ void loop()
             // Read the incoming message
             unsigned long start = millis();
 
-            int16_t receiveState = RADIOLIB_ERR_UNKNOWN;
+            int16_t receiveState = -1;
             do
             {
                 Serial.println(F("Waiting for ACK..."));
-                receiveState = lora.receive((uint8_t *)&loraMessage, sizeof(LoRaMessage));
+                int bytesRead = radio.lora_receive_async((uint8_t *)&loraMessage, sizeof(LoRaMessage));
+                // receiveState = lora.receive((uint8_t *)&loraMessage, sizeof(LoRaMessage));
                 Serial.print("State: ");
                 Serial.println(receiveState);
                 if (millis() - start > randomDelay)
@@ -341,9 +347,9 @@ void loop()
                     Serial.println("Timeout waiting for ACK.");
                     break;
                 }
-            } while (receiveState != RADIOLIB_ERR_NONE);
+            } while (receiveState < 0);
 
-            if (receiveState == RADIOLIB_ERR_NONE)
+            if (receiveState >= 0)
             {
                 Serial.print("Received ACK: ");
                 Serial.print("Sensor ID: ");
@@ -375,14 +381,14 @@ void loop()
             else
             {
                 Serial.print("Error receiving ACK, code: ");
-                Serial.println(state);
+                Serial.println(receiveState);
             }
         }
-        else
-        {
-            Serial.print("Error transmitting message, code: ");
-            Serial.println(state);
-        }
+        // else
+        // {
+        //     Serial.print("Error transmitting message, code: ");
+        //     Serial.println(state);
+        // }
 
         // If ACK not received, wait for a random delay before retrying
         if (!ackReceived)
