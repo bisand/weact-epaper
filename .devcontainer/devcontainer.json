@@ -27,7 +27,9 @@
 		45048
 	],
 	"mounts": [
-		"source=/dev/,target=/dev/,type=bind,consistency=consistent"
+		"source=/dev/,target=/dev/,type=bind,consistency=consistent",
+		// /.ssh mapping
+		"source=${localEnv:HOME}/.ssh,target=/home/vscode/.ssh,type=bind,consistency=consistent"
 	],
 	"runArgs": [
 		"--privileged"

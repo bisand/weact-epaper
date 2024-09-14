@@ -27,29 +27,33 @@
 #include <TimeLib.h>
 #include "LowPower.h"
 #include <ArduinoUniqueID.h>
+#include <SPI.h>
+#include "1_54in_epaper.h"
+#include <stdlib.h>
 
-// NodeMCU (ESP8266) <-> SX1262 LoRa Module
-// D5 (GPIO14) <-> SCK
-// D6 (GPIO12) <-> MISO
-// D7 (GPIO13) <-> MOSI
-// D8 (GPIO15) <-> NSS (Chip Select)
-// D2 (GPIO4) <-> RST
-// D3 (GPIO0) <-> DIO1
-// D1 (GPIO5) <-> BUSY
+#define LORA_DIO1 9
+#define LORA_NSS SS
+#define LORA_RESET 8
 
-// SX1262 has the following connections:
-// NSS pin: 15 -> D8
-// DIO1 pin: 0 -> D3
-// NRST pin: 4 -> D2
-// BUSY pin: 5 -> D1
+LoraSx1262 radio(LORA_DIO1, LORA_NSS, LORA_RESET);
 
-#define LORA_CS PB2
-#define LORA_DIO1 PB1
-#define LORA_RST PB0
-#define LORA_BUSY PD2
+#define RST_PIN 5
+#define DC_PIN 6
+#define CS_PIN 7
+#define BUSY_PIN 4
 
-// SX1262 lora = new Module(LORA_CS, LORA_DIO1, LORA_RST, LORA_BUSY);
-LoraSx1262 radio;
+Epd epd(RST_PIN, DC_PIN, CS_PIN, BUSY_PIN); // initiate e-paper display [epd]
+unsigned char image[1024];                  // memory for display
+Paint paint(image, 0, 0);                   // setup for text display
+
+#define COLORED 0   // background color handler (dark)
+#define UNCOLORED 1 // background color handler (light)
+
+int iter_val = 0; // storage variable for serial data
+
+int initial_space = 10; // initial white/dark space at the top of the display
+int row_line = 3;       // counting rows to avoid overlap
+int row_height = 24;    // row height (based on text size)
 
 uint8_t rfPower = 22;
 const char delimiter = '|';
@@ -193,7 +197,7 @@ void convertToLocalTime(const char *utcDatetime, char *localDatetime, size_t siz
 void writeSensorDataToRtc(const SensorData &sensorData, RtcData &rtcData)
 {
     // Convert sensorId, messageId, and lastTicks to char array
-    sprintf(rtcData.data, "%u,%u,%lld", sensorData.sensorId, sensorData.messageId, sensorData.epochTime);
+    sprintf(rtcData.data, "%u,%lu,%lu", sensorData.sensorId, sensorData.messageId, sensorData.epochTime);
     Serial.print("Writing to RTC memory: ");
     Serial.println(rtcData.data);
 }
@@ -203,7 +207,7 @@ void readSensorDataFromRtc(const RtcData &rtcData, SensorData &sensorData)
     // Parse the char array data and assign values to sensorId, messageId, and lastTicks
     Serial.print("Reading from RTC memory: ");
     Serial.println(rtcData.data);
-    sscanf(rtcData.data, "%u,%u,%lld", &sensorData.sensorId, &sensorData.messageId, &sensorData.epochTime);
+    sscanf(rtcData.data, "%u,%lu,%lu", &sensorData.sensorId, &sensorData.messageId, &sensorData.epochTime);
 }
 
 void initRF()
@@ -212,7 +216,7 @@ void initRF()
     // non-default settings
     // this LoRa link will have high data rate,
     // but lower range
-    Serial.print(F("[SX1268] Initializing ... "));
+    Serial.println(F("[SX1268] Initializing ... "));
     // carrier frequency:           868.0 MHz
     float freq = 868.0;
     // bandwidth:                   125.0 kHz
@@ -234,16 +238,19 @@ void initRF()
     }
 
     // FREQUENCY - Set frequency to 902Mhz (default 915Mhz)
-    radio.configSetFrequency(868000000); // Freq in Hz. Must comply with your local radio regulations
+    radio.configSetFrequency(866000000); // Freq in Hz. Must comply with your local radio regulations
 
     // BANDWIDTH - Set bandwidth to 250khz (default 500khz)
-    radio.configSetBandwidth(0x01); // 0=7.81khz, 5=200khz, 6=500khz. See documentation for more
+    radio.configSetBandwidth(0x03); // 0=7.81khz, 5=200khz, 6=500khz. See documentation for more
 
     // CODING RATE - Set the coding rate to CR_4_6
-    radio.configSetCodingRate(2); // 1-4 = coding rate CR_4_5, CR_4_6, CR_4_7, and CR_4_8 respectively
+    radio.configSetCodingRate(5); // 1-4 = coding rate CR_4_5, CR_4_6, CR_4_7, and CR_4_8 respectively
 
     // SPREADING FACTOR - Set the spreading factor to SF12.  (default is SF7)
     radio.configSetSpreadingFactor(12); // 5-12 are valid ranges.  5 is fast and short range, 12 is slow and long range
+
+    radio.configSetSyncWord(syncWord); // Set the sync word to 0x34 (public network/LoRaWAN)
+
     // radio.configSetPreset(PRESET_LONGRANGE);
     // int16_t state = lora.begin(freq, bw, sf, cr, syncWord, power, preambleLength);
     // if (state == RADIOLIB_ERR_NONE)
@@ -265,6 +272,24 @@ void initRF()
 
     // radio.setOutputPower(rfPower);
     Serial.println(F("Radio initialized."));
+}
+
+void header_print()
+{
+    paint.SetWidth(200); // set display width
+    paint.SetHeight(24); // set initial vertical space
+
+    paint.Clear(COLORED);                                            // darkr background
+    paint.DrawStringAt(0, 4, "1.54in e-Paper!", &Font20, UNCOLORED); // light text
+    epd.SetFrameMemory(paint.GetImage(), 0, initial_space + (0 * row_height), paint.GetWidth(), paint.GetHeight());
+
+    paint.Clear(UNCOLORED);                                    // light background
+    paint.DrawStringAt(0, 4, "Simple Demo", &Font20, COLORED); // dark text
+    epd.SetFrameMemory(paint.GetImage(), 0, initial_space + (1 * row_height), paint.GetWidth(), paint.GetHeight());
+
+    paint.Clear(COLORED);                                         // dark background
+    paint.DrawStringAt(0, 4, "Maker Portal", &Font20, UNCOLORED); // light text
+    epd.SetFrameMemory(paint.GetImage(), 0, initial_space + (2 * row_height), paint.GetWidth(), paint.GetHeight());
 }
 
 void setup()
@@ -296,12 +321,33 @@ void setup()
     }
 
     initRF();
+
+    Serial.println("Initializing e-paper display...");
+    epd.LDirInit();                  // initialize epaper
+    Serial.println("Display initialized.");
+    Serial.println("Clearing display...");
+    epd.Clear();                     // clear old text/imagery
+    Serial.println("Display cleared.");
+    Serial.println("Displaying base image...");
+    epd.DisplayPartBaseWhiteImage(); // lay a base white layer down first
+    Serial.println("Base image displayed.");
 }
 
 int count = 0;
 
 void loop()
 {
+    String str_to_print = "Val: ";    // string prepend
+    str_to_print += String(iter_val); // add integer value
+
+    header_print(); // print header text
+
+    paint.Clear(UNCOLORED);                                           // clear background
+    paint.DrawStringAt(0, 4, str_to_print.c_str(), &Font20, COLORED); // light background
+    epd.SetFrameMemory(paint.GetImage(), 0, initial_space + (3 * row_height), paint.GetWidth(), paint.GetHeight());
+    epd.DisplayPartFrame(); // display new text
+    iter_val += 1;          // increase integer value
+
     bool ackReceived = false;
     sensorData.messageId++;
     // writeSensorDataToRtc(sensorData, rtcData);
@@ -335,13 +381,13 @@ void loop()
             unsigned long start = millis();
 
             int16_t receiveState = -1;
+            Serial.println(F("Waiting for ACK..."));
             do
             {
-                Serial.println(F("Waiting for ACK..."));
                 int bytesRead = radio.lora_receive_async((uint8_t *)&loraMessage, sizeof(LoRaMessage));
                 // receiveState = lora.receive((uint8_t *)&loraMessage, sizeof(LoRaMessage));
-                Serial.print("State: ");
-                Serial.println(receiveState);
+                // Serial.print("State: ");
+                // Serial.println(receiveState);
                 if (millis() - start > randomDelay)
                 {
                     Serial.println("Timeout waiting for ACK.");
