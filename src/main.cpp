@@ -21,47 +21,47 @@
 */
 
 // include the libraries
-#include <LoraSx1262.h>
+#include <ESP8266WiFi.h>
+#include <RadioLib.h>
 #include <time.h>
-#include <EEPROM.h>
 #include <TimeLib.h>
-#include "LowPower.h"
-#include <ArduinoUniqueID.h>
-#include <SPI.h>
-#include "1_54in_epaper.h"
-#include <stdlib.h>
+#include <EEPROM.h>
 
-#define LORA_DIO1 9
-#define LORA_NSS SS
-#define LORA_RESET 8
+#define LORA_CS D8
+#define LORA_DIO1 D1
+#define LORA_RST D3
+#define LORA_BUSY D2
 
-LoraSx1262 radio(LORA_DIO1, LORA_NSS, LORA_RESET);
+SX1262 lora = new Module(LORA_CS, LORA_DIO1, LORA_RST, LORA_BUSY);
 
-#define RST_PIN 5
-#define DC_PIN 6
-#define CS_PIN 7
-#define BUSY_PIN 4
+// flag to indicate that a packet was received
+volatile bool receivedFlag = false;
+volatile bool enableInterrupt = true;
 
-Epd epd(RST_PIN, DC_PIN, CS_PIN, BUSY_PIN); // initiate e-paper display [epd]
-unsigned char image[1024];                  // memory for display
-Paint paint(image, 0, 0);                   // setup for text display
-
-#define COLORED 0   // background color handler (dark)
-#define UNCOLORED 1 // background color handler (light)
-
-int iter_val = 0; // storage variable for serial data
-
-int initial_space = 10; // initial white/dark space at the top of the display
-int row_line = 3;       // counting rows to avoid overlap
-int row_height = 24;    // row height (based on text size)
+// this function is called when a complete packet
+// is received by the module
+// IMPORTANT: this function MUST be 'void' type
+//            and MUST NOT have any arguments!
+#if defined(ESP8266) || defined(ESP32)
+IRAM_ATTR
+#endif
+void setFlag(void)
+{
+    if (!enableInterrupt)
+    {
+        return;
+    }
+    // we got a packet, set the flag
+    receivedFlag = true;
+}
 
 uint8_t rfPower = 22;
 const char delimiter = '|';
 
 struct LoRaMessage
 {
-    uint32_t sensorID;
-    uint32_t messageID;
+    uint64_t sensorId;
+    uint32_t messageId;
     time_t epochTime;
     byte cmd;
     float temperature;
@@ -78,7 +78,7 @@ struct RtcData
 
 struct SensorData
 {
-    uint8_t sensorId;
+    uint64_t sensorId;
     uint32_t messageId;
     time_t epochTime;
 };
@@ -129,15 +129,8 @@ void printMemory()
     Serial.println();
 }
 
-void writeMemory()
+void WriteEeprom()
 {
-    // Update CRC32 of data
-    rtcData.crc32 = calculateCRC32((uint8_t *)&rtcData.data[0], sizeof(rtcData.data));
-    // Write struct to RTC memory
-    // if (!ESP.rtcUserMemoryWrite(0, (uint32_t *)&rtcData, sizeof(rtcData)))
-    // {
-    //     Serial.println("Error writing to RTC memory");
-    // }
     // Write struct to EEPROM
     for (size_t i = 0; i < sizeof(rtcData); i++)
     {
@@ -145,25 +138,39 @@ void writeMemory()
     }
 }
 
-void readMemory()
+void ReadEeprom()
 {
-    // if (ESP.rtcUserMemoryRead(0, (uint32_t *)&rtcData, sizeof(rtcData)))
-    // {
-    //     uint32_t crcOfData = calculateCRC32((uint8_t *)&rtcData.data[0], sizeof(rtcData.data));
-    //     if (crcOfData != rtcData.crc32)
-    //     {
-    //         Serial.println("CRC32 in RTC memory doesn't match CRC32 of data. Data is probably invalid!");
-    //     }
-    //     else
-    //     {
-    //         Serial.println("CRC32 check ok, data is probably valid.");
-    //     }
-    // }
-
     // Read struct from EEPROM
     for (size_t i = 0; i < sizeof(rtcData); i++)
     {
         ((uint8_t *)&rtcData)[i] = EEPROM.read(i);
+    }
+}
+
+void writeMemory()
+{
+    // Update CRC32 of data
+    rtcData.crc32 = calculateCRC32((uint8_t *)&rtcData.data[0], sizeof(rtcData.data));
+    // Write struct to RTC memory
+    if (!ESP.rtcUserMemoryWrite(0, (uint32_t *)&rtcData, sizeof(rtcData)))
+    {
+        Serial.println("Error writing to RTC memory");
+    }
+}
+
+void readMemory()
+{
+    if (ESP.rtcUserMemoryRead(0, (uint32_t *)&rtcData, sizeof(rtcData)))
+    {
+        uint32_t crcOfData = calculateCRC32((uint8_t *)&rtcData.data[0], sizeof(rtcData.data));
+        if (crcOfData != rtcData.crc32)
+        {
+            Serial.println("CRC32 in RTC memory doesn't match CRC32 of data. Data is probably invalid!");
+        }
+        else
+        {
+            Serial.println("CRC32 check ok, data is probably valid.");
+        }
     }
 } // counter to keep track of transmitted packets
 
@@ -197,7 +204,7 @@ void convertToLocalTime(const char *utcDatetime, char *localDatetime, size_t siz
 void writeSensorDataToRtc(const SensorData &sensorData, RtcData &rtcData)
 {
     // Convert sensorId, messageId, and lastTicks to char array
-    sprintf(rtcData.data, "%u,%lu,%lu", sensorData.sensorId, sensorData.messageId, sensorData.epochTime);
+    sprintf(rtcData.data, "%llu,%u,%llu", sensorData.sensorId, sensorData.messageId, sensorData.epochTime);
     Serial.print("Writing to RTC memory: ");
     Serial.println(rtcData.data);
 }
@@ -207,7 +214,19 @@ void readSensorDataFromRtc(const RtcData &rtcData, SensorData &sensorData)
     // Parse the char array data and assign values to sensorId, messageId, and lastTicks
     Serial.print("Reading from RTC memory: ");
     Serial.println(rtcData.data);
-    sscanf(rtcData.data, "%u,%lu,%lu", &sensorData.sensorId, &sensorData.messageId, &sensorData.epochTime);
+    sscanf(rtcData.data, "%llu,%u,%llu", &sensorData.sensorId, &sensorData.messageId, &sensorData.epochTime);
+}
+
+uint64_t getChipId()
+{
+    uint8_t baseMac[6];
+    WiFi.macAddress(baseMac);
+    uint64_t chipId = 0;
+    for (int i = 0; i < 6; i++)
+    {
+        chipId |= (uint64_t)(baseMac[i]) << ((5 - i) * 8);
+    }
+    return chipId;
 }
 
 void initRF()
@@ -216,87 +235,67 @@ void initRF()
     // non-default settings
     // this LoRa link will have high data rate,
     // but lower range
-    Serial.println(F("[SX1268] Initializing ... "));
+    Serial.print(F("[SX1262] Initializing ... "));
     // carrier frequency:           868.0 MHz
     float freq = 868.0;
     // bandwidth:                   125.0 kHz
-    float bw = 125.0 / 2;
+    float bw = 62.5;
     // spreading factor:            10
     uint8_t sf = 10;
     // coding rate:                 5
     uint8_t cr = 5;
-    // sync word:                   0x34 (public network/LoRaWAN)
-    uint16_t syncWord = 0x24;
+    // sync word:                   0x34 (public network/LoRaWAN), 0x24 (private)
+    uint8_t syncWord = 0x24;
     // output power:                2 dBm
     int8_t power = 22;
     // preamble length:             20 symbols
     uint16_t preambleLength = 20;
 
-    if (!radio.begin())
-    { // Initialize radio
-        Serial.println("Failed to initialize radio.");
+    int state = lora.begin(freq, bw, sf, cr, syncWord, power, preambleLength);
+    if (state == RADIOLIB_ERR_NONE)
+    {
+        Serial.println(F("success!"));
+    }
+    else
+    {
+        Serial.print(F("failed, code "));
+        Serial.println(state);
+        while (true)
+            ;
     }
 
-    // FREQUENCY - Set frequency to 902Mhz (default 915Mhz)
-    radio.configSetFrequency(866000000); // Freq in Hz. Must comply with your local radio regulations
+    if (lora.setTCXO(2.4) == RADIOLIB_ERR_INVALID_TCXO_VOLTAGE)
+    {
+        Serial.println(F("Selected TCXO voltage is invalid for this module!"));
+    }
 
-    // BANDWIDTH - Set bandwidth to 250khz (default 500khz)
-    radio.configSetBandwidth(0x03); // 0=7.81khz, 5=200khz, 6=500khz. See documentation for more
+    // set the function that will be called
+    // when new packet is received
+    lora.setPacketReceivedAction(setFlag);
 
-    // CODING RATE - Set the coding rate to CR_4_6
-    radio.configSetCodingRate(5); // 1-4 = coding rate CR_4_5, CR_4_6, CR_4_7, and CR_4_8 respectively
-
-    // SPREADING FACTOR - Set the spreading factor to SF12.  (default is SF7)
-    radio.configSetSpreadingFactor(12); // 5-12 are valid ranges.  5 is fast and short range, 12 is slow and long range
-
-    radio.configSetSyncWord(syncWord); // Set the sync word to 0x34 (public network/LoRaWAN)
-
-    // radio.configSetPreset(PRESET_LONGRANGE);
-    // int16_t state = lora.begin(freq, bw, sf, cr, syncWord, power, preambleLength);
-    // if (state == RADIOLIB_ERR_NONE)
-    // {
-    //     Serial.println(F("success!"));
-    // }
-    // else
-    // {
-    //     Serial.print(F("failed, code "));
-    //     Serial.println(state);
-    //     while (true)
-    //         ;
-    // }
-
-    // if (lora.setTCXO(2.4) == RADIOLIB_ERR_INVALID_TCXO_VOLTAGE)
-    // {
-    //     Serial.println(F("Selected TCXO voltage is invalid for this module!"));
-    // }
-
-    // radio.setOutputPower(rfPower);
-    Serial.println(F("Radio initialized."));
-}
-
-void header_print()
-{
-    paint.SetWidth(200); // set display width
-    paint.SetHeight(24); // set initial vertical space
-
-    paint.Clear(COLORED);                                            // darkr background
-    paint.DrawStringAt(0, 4, "1.54in e-Paper!", &Font20, UNCOLORED); // light text
-    epd.SetFrameMemory(paint.GetImage(), 0, initial_space + (0 * row_height), paint.GetWidth(), paint.GetHeight());
-
-    paint.Clear(UNCOLORED);                                    // light background
-    paint.DrawStringAt(0, 4, "Simple Demo", &Font20, COLORED); // dark text
-    epd.SetFrameMemory(paint.GetImage(), 0, initial_space + (1 * row_height), paint.GetWidth(), paint.GetHeight());
-
-    paint.Clear(COLORED);                                         // dark background
-    paint.DrawStringAt(0, 4, "Maker Portal", &Font20, UNCOLORED); // light text
-    epd.SetFrameMemory(paint.GetImage(), 0, initial_space + (2 * row_height), paint.GetWidth(), paint.GetHeight());
+    // start listening for LoRa packets
+    Serial.print(F("[SX1262] Starting to listen ... "));
+    state = lora.startReceive();
+    if (state == RADIOLIB_ERR_NONE)
+    {
+        Serial.println(F("success!"));
+    }
+    else
+    {
+        Serial.print(F("failed, code "));
+        Serial.println(state);
+        while (true)
+        {
+            delay(10);
+        }
+    }
 }
 
 void setup()
 {
     Serial.begin(9600);
     while (!Serial)
-        ; // wait for Serial to be initialized
+        delay(10); // wait for Serial to be initialized
 
     // Read struct from RTC memory
     readMemory();
@@ -310,10 +309,15 @@ void setup()
     Serial.println(sensorData.epochTime);
 
     // Initialize the sensor ID if it's not set
-    UniqueID8;
-    if (sensorData.sensorId != UniqueID8)
+    uint64_t chipId = getChipId();
+    if (sensorData.sensorId != chipId)
     {
-        sensorData.sensorId = UniqueID8;
+        Serial.println("Sensor ID not set, initializing...");
+        Serial.print("Chip ID: ");
+        Serial.println(chipId);
+        Serial.print("Chip ID (HEX): ");
+        Serial.println(chipId, HEX);
+        sensorData.sensorId = chipId;
         sensorData.messageId = 0;
         sensorData.epochTime = 0;
         writeSensorDataToRtc(sensorData, rtcData);
@@ -321,42 +325,17 @@ void setup()
     }
 
     initRF();
-
-    Serial.println("Initializing e-paper display...");
-    epd.LDirInit();                  // initialize epaper
-    Serial.println("Display initialized.");
-    Serial.println("Clearing display...");
-    epd.Clear();                     // clear old text/imagery
-    Serial.println("Display cleared.");
-    Serial.println("Displaying base image...");
-    epd.DisplayPartBaseWhiteImage(); // lay a base white layer down first
-    Serial.println("Base image displayed.");
 }
 
 int count = 0;
 
 void loop()
 {
-    String str_to_print = "Val: ";    // string prepend
-    str_to_print += String(iter_val); // add integer value
-
-    header_print(); // print header text
-
-    paint.Clear(UNCOLORED);                                           // clear background
-    paint.DrawStringAt(0, 4, str_to_print.c_str(), &Font20, COLORED); // light background
-    epd.SetFrameMemory(paint.GetImage(), 0, initial_space + (3 * row_height), paint.GetWidth(), paint.GetHeight());
-    epd.DisplayPartFrame(); // display new text
-    iter_val += 1;          // increase integer value
-
     bool ackReceived = false;
     sensorData.messageId++;
-    // writeSensorDataToRtc(sensorData, rtcData);
 
-    // Create the message payload including the sensor ID and message ID
-    String message = String(sensorData.sensorId) + "," + String(sensorData.messageId) + "," + String(sensorData.epochTime) + ",Hello, World!";
-
-    loraMessage.sensorID = sensorData.sensorId;
-    loraMessage.messageID = sensorData.messageId;
+    loraMessage.sensorId = sensorData.sensorId;
+    loraMessage.messageId = sensorData.messageId;
     loraMessage.epochTime = sensorData.epochTime;
     loraMessage.cmd = 0x00;
     loraMessage.temperature = (float)random(0, 2500) / 100;
@@ -368,11 +347,9 @@ void loop()
 
         // Send the message
         uint8_t *dataPtr = (uint8_t *)&loraMessage;
-        // int16_t state = lora.transmit(dataPtr, sizeof(LoRaMessage));
-        // int16_t state = lora.transmit(message);
-        radio.transmit(dataPtr, sizeof(LoRaMessage));
+        int16_t state = lora.transmit(dataPtr, sizeof(LoRaMessage));
 
-        // if (state == RADIOLIB_ERR_NONE)
+        if (state == RADIOLIB_ERR_NONE)
         {
             Serial.println("Message sent successfully, waiting for ACK...");
 
@@ -384,10 +361,9 @@ void loop()
             Serial.println(F("Waiting for ACK..."));
             do
             {
-                int bytesRead = radio.lora_receive_async((uint8_t *)&loraMessage, sizeof(LoRaMessage));
-                // receiveState = lora.receive((uint8_t *)&loraMessage, sizeof(LoRaMessage));
-                // Serial.print("State: ");
-                // Serial.println(receiveState);
+                receiveState = lora.receive((uint8_t *)&loraMessage, sizeof(LoRaMessage));
+                Serial.print("State: ");
+                Serial.println(receiveState);
                 if (millis() - start > randomDelay)
                 {
                     Serial.println("Timeout waiting for ACK.");
@@ -399,16 +375,16 @@ void loop()
             {
                 Serial.print("Received ACK: ");
                 Serial.print("Sensor ID: ");
-                Serial.println(loraMessage.sensorID);
+                Serial.println(loraMessage.sensorId);
                 Serial.print("Message ID: ");
-                Serial.println(loraMessage.messageID);
+                Serial.println(loraMessage.messageId);
                 Serial.print("Command: ");
                 Serial.println(loraMessage.cmd);
                 Serial.print("Payload: ");
                 Serial.println(loraMessage.temperature);
 
                 // Check if the received ACK matches this sensor and message
-                if (loraMessage.sensorID == sensorData.sensorId && loraMessage.messageID == sensorData.messageId && loraMessage.cmd == 0xFF)
+                if (loraMessage.sensorId == sensorData.sensorId && loraMessage.messageId == sensorData.messageId && loraMessage.cmd == 0xFF)
                 {
                     Serial.println("Correct ACK received with datetime!");
 
@@ -430,11 +406,11 @@ void loop()
                 Serial.println(receiveState);
             }
         }
-        // else
-        // {
-        //     Serial.print("Error transmitting message, code: ");
-        //     Serial.println(state);
-        // }
+        else
+        {
+            Serial.print("Error transmitting message, code: ");
+            Serial.println(state);
+        }
 
         // If ACK not received, wait for a random delay before retrying
         if (!ackReceived)
@@ -464,6 +440,5 @@ void loop()
 
     // Enter deep sleep for one hour
     // ESP.deepSleep(3600e6, RF_DISABLED); // Sleep for 1 hour
-    // ESP.deepSleep(60e6, RF_DISABLED); // Sleep for 1 minute
-    LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
+    ESP.deepSleep(60e6, RF_DISABLED); // Sleep for 1 minute
 }
