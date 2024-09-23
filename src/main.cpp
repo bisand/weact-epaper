@@ -19,6 +19,7 @@
   For full API reference, see the GitHub Pages
   https://jgromes.github.io/RadioLib/
 */
+#define ENABLE_GxEPD2_GFX 0
 
 // include the libraries
 #include <ESP8266WiFi.h>
@@ -26,6 +27,32 @@
 #include <time.h>
 #include <TimeLib.h>
 #include <EEPROM.h>
+#include <GxEPD2_BW.h>
+// #include <Fonts/FreeSansBold24pt7b.h>
+#include <../fonts/RobotoCondensed_Bold48pt7b.h>
+#include <../fonts/Roboto_Regular10pt7b.h>
+
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+// Data wire is plugged into port 2 on the Arduino
+#define ONE_WIRE_BUS D4
+
+// Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
+OneWire oneWire(ONE_WIRE_BUS);
+
+// Pass our oneWire reference to Dallas Temperature.
+DallasTemperature sensors(&oneWire);
+
+// ESP32 CS(SS)=5,SCL(SCK)=18,SDA(MOSI)=23,RES(RST)=2,DC=0
+// ESP8266 BUSY=12,RES(RST)=2,DC=1,CS(SS)=15,SCL(SCK)=14,SDA(MOSI)=13
+#define SCR_CS 15
+#define SCR_RES 2
+#define SCR_DC 1
+#define SCR_BUSY 12
+
+// 2.13'' EPD Module
+GxEPD2_BW<GxEPD2_213_BN, GxEPD2_213_BN::HEIGHT> display(GxEPD2_213_BN(SCR_CS, SCR_DC, SCR_RES, SCR_BUSY)); // DEPG0213BN 122x250, SSD1680
 
 #define LORA_CS D8
 #define LORA_DIO1 D1
@@ -83,7 +110,7 @@ struct SensorData
     time_t epochTime;
 };
 
-RtcData rtcData;
+// RtcData rtcData;
 SensorData sensorData;
 
 uint32_t calculateCRC32(const uint8_t *data, size_t length)
@@ -109,50 +136,30 @@ uint32_t calculateCRC32(const uint8_t *data, size_t length)
     return crc;
 }
 
-void printMemory()
-{
-    char buf[3];
-    uint8_t *ptr = (uint8_t *)&rtcData;
-    for (size_t i = 0; i < sizeof(rtcData); i++)
-    {
-        sprintf(buf, "%02X", ptr[i]);
-        Serial.print(buf);
-        if ((i + 1) % 32 == 0)
-        {
-            Serial.println();
-        }
-        else
-        {
-            Serial.print(" ");
-        }
-    }
-    Serial.println();
-}
-
 void WriteEeprom()
 {
     // Write struct to EEPROM
-    for (size_t i = 0; i < sizeof(rtcData); i++)
+    for (size_t i = 0; i < sizeof(sensorData); i++)
     {
-        EEPROM.write(i, ((uint8_t *)&rtcData)[i]);
+        EEPROM.write(i, ((uint8_t *)&sensorData)[i]);
     }
 }
 
 void ReadEeprom()
 {
     // Read struct from EEPROM
-    for (size_t i = 0; i < sizeof(rtcData); i++)
+    for (size_t i = 0; i < sizeof(sensorData); i++)
     {
-        ((uint8_t *)&rtcData)[i] = EEPROM.read(i);
+        ((uint8_t *)&sensorData)[i] = EEPROM.read(i);
     }
 }
 
 void writeMemory()
 {
     // Update CRC32 of data
-    rtcData.crc32 = calculateCRC32((uint8_t *)&rtcData.data[0], sizeof(rtcData.data));
+    // sensorData.crc32 = calculateCRC32((uint8_t *)&sensorData.data[0], sizeof(sensorData.data));
     // Write struct to RTC memory
-    if (!ESP.rtcUserMemoryWrite(0, (uint32_t *)&rtcData, sizeof(rtcData)))
+    if (!ESP.rtcUserMemoryWrite(0, (uint32_t *)&sensorData, sizeof(sensorData)))
     {
         Serial.println("Error writing to RTC memory");
     }
@@ -160,17 +167,17 @@ void writeMemory()
 
 void readMemory()
 {
-    if (ESP.rtcUserMemoryRead(0, (uint32_t *)&rtcData, sizeof(rtcData)))
+    if (ESP.rtcUserMemoryRead(0, (uint32_t *)&sensorData, sizeof(sensorData)))
     {
-        uint32_t crcOfData = calculateCRC32((uint8_t *)&rtcData.data[0], sizeof(rtcData.data));
-        if (crcOfData != rtcData.crc32)
-        {
-            Serial.println("CRC32 in RTC memory doesn't match CRC32 of data. Data is probably invalid!");
-        }
-        else
-        {
-            Serial.println("CRC32 check ok, data is probably valid.");
-        }
+        // uint32_t crcOfData = calculateCRC32((uint8_t *)&sensorData.data[0], sizeof(sensorData.data));
+        // if (crcOfData != sensorData.crc32)
+        // {
+        //     Serial.println("CRC32 in RTC memory doesn't match CRC32 of data. Data is probably invalid!");
+        // }
+        // else
+        // {
+        //     Serial.println("CRC32 check ok, data is probably valid.");
+        // }
     }
 } // counter to keep track of transmitted packets
 
@@ -201,21 +208,21 @@ void convertToLocalTime(const char *utcDatetime, char *localDatetime, size_t siz
              hour(localTime), minute(localTime), second(localTime));
 }
 
-void writeSensorDataToRtc(const SensorData &sensorData, RtcData &rtcData)
-{
-    // Convert sensorId, messageId, and lastTicks to char array
-    sprintf(rtcData.data, "%llu,%u,%llu", sensorData.sensorId, sensorData.messageId, sensorData.epochTime);
-    Serial.print("Writing to RTC memory: ");
-    Serial.println(rtcData.data);
-}
+// void writeSensorDataToRtc(const SensorData &sensorData, RtcData &rtcData)
+// {
+//     // Convert sensorId, messageId, and lastTicks to char array
+//     sprintf(rtcData.data, "%llu,%u,%llu", sensorData.sensorId, sensorData.messageId, sensorData.epochTime);
+//     Serial.print("Writing to RTC memory: ");
+//     Serial.println(rtcData.data);
+// }
 
-void readSensorDataFromRtc(const RtcData &rtcData, SensorData &sensorData)
-{
-    // Parse the char array data and assign values to sensorId, messageId, and lastTicks
-    Serial.print("Reading from RTC memory: ");
-    Serial.println(rtcData.data);
-    sscanf(rtcData.data, "%llu,%u,%llu", &sensorData.sensorId, &sensorData.messageId, &sensorData.epochTime);
-}
+// void readSensorDataFromRtc(const RtcData &rtcData, SensorData &sensorData)
+// {
+//     // Parse the char array data and assign values to sensorId, messageId, and lastTicks
+//     Serial.print("Reading from RTC memory: ");
+//     Serial.println(rtcData.data);
+//     sscanf(rtcData.data, "%llu,%u,%llu", &sensorData.sensorId, &sensorData.messageId, &sensorData.epochTime);
+// }
 
 uint64_t getChipId()
 {
@@ -227,6 +234,58 @@ uint64_t getChipId()
         chipId |= (uint64_t)(baseMac[i]) << ((5 - i) * 8);
     }
     return chipId;
+}
+
+void display_temp(time_t time, float temp)
+{
+    char info_text[26];
+    sprintf(info_text, "Siste: %s", asctime(localtime(&time)));
+    // const char *info_text = "Siste: 2024-08-09 17:18:42";
+    char temp_text[10];                 // Make sure this is large enough to hold the formatted string
+    sprintf(temp_text, "%.1f C", temp); // Convert float to string with 1 decimal places
+
+    // Replace the decimal point with a comma
+    char *comma_pos = strchr(temp_text, '.');
+    if (comma_pos)
+    {
+        *comma_pos = ','; // Replace '.' with ','
+    }
+
+    display.setRotation(1);
+    display.setTextColor(GxEPD_BLACK);
+
+    display.setFont(&RobotoCondensed_Bold48pt7b);
+    int16_t tb1_x, tb1_y;
+    uint16_t tb1_w, tb1_h;
+    display.getTextBounds(temp_text, 0, 0, &tb1_x, &tb1_y, &tb1_w, &tb1_h);
+    // center the bounding box by transposition of the origin:
+    uint16_t x1 = ((display.width() - tb1_w) / 2) - tb1_x;
+    uint16_t y1 = tb1_h - 15;
+
+    display.setFont(&Roboto_Regular10pt7b);
+    int16_t tb2_x, tb2_y;
+    uint16_t tb2_w, tb2_h;
+    display.getTextBounds(info_text, 0, 0, &tb2_x, &tb2_y, &tb2_w, &tb2_h);
+    // center the bounding box by transposition of the origin:
+    uint16_t x2 = ((display.width() - tb2_w) / 2) - tb2_x;
+    uint16_t y2 = display.height() - 5;
+
+    display.setFullWindow();
+    display.firstPage();
+    do
+    {
+        display.fillScreen(GxEPD_WHITE);
+        // display.writeFastHLine(0, 0, display.width(), GxEPD_BLACK);
+        // display.writeFastHLine(0, display.height() - 1, display.width(), GxEPD_BLACK);
+        // display.writeFastVLine(0, 0, display.height(), GxEPD_BLACK);
+        // display.writeFastVLine(display.width() - 1, 0, display.height(), GxEPD_BLACK);
+        display.setCursor(x1, y1);
+        display.setFont(&RobotoCondensed_Bold48pt7b);
+        display.print(temp_text);
+        display.setFont(&Roboto_Regular10pt7b);
+        display.setCursor(x2, y2);
+        display.print(info_text);
+    } while (display.nextPage());
 }
 
 void initRF()
@@ -291,15 +350,32 @@ void initRF()
     }
 }
 
+float getTemperature()
+{
+    // Send the command to get temperatures
+    Serial.print("Requesting temperatures...");
+    sensors.requestTemperatures();
+    Serial.println("DONE");
+    // Get the temperature in Celsius
+    float tempC = sensors.getTempCByIndex(0);
+    Serial.print("Temperature for the device 1 (index 0) is: ");
+    Serial.println(tempC);
+    return tempC;
+}
+
 void setup()
 {
+    // initialize the serial port
     Serial.begin(9600);
     while (!Serial)
         delay(10); // wait for Serial to be initialized
 
+    pinMode(RX, OUTPUT);
+    digitalWrite(RX, HIGH);
+
     // Read struct from RTC memory
     readMemory();
-    readSensorDataFromRtc(rtcData, sensorData);
+    // readSensorDataFromRtc(sensorData, sensorData);
     Serial.println("Data stored in RTC memory: ");
     Serial.print("Sensor ID: ");
     Serial.println(sensorData.sensorId);
@@ -320,11 +396,14 @@ void setup()
         sensorData.sensorId = chipId;
         sensorData.messageId = 0;
         sensorData.epochTime = 0;
-        writeSensorDataToRtc(sensorData, rtcData);
+        // writeSensorDataToRtc(sensorData, sensorData);
         writeMemory();
     }
 
+    delay(1000);
     initRF();
+    // Start up the library
+    sensors.begin();
 }
 
 int count = 0;
@@ -338,7 +417,7 @@ void loop()
     loraMessage.messageId = sensorData.messageId;
     loraMessage.epochTime = sensorData.epochTime;
     loraMessage.cmd = 0x00;
-    loraMessage.temperature = (float)random(0, 2500) / 100;
+    loraMessage.temperature = getTemperature(); //(float)random(0, 2500) / 100;
 
     // Loop to attempt transmission up to maxRetransmissions times
     for (int attempt = 0; attempt < 5; attempt++)
@@ -431,12 +510,18 @@ void loop()
         Serial.print("Message ID: ");
         Serial.println(sensorData.messageId);
         // Write the updated sensor data to RTC memory
-        writeSensorDataToRtc(sensorData, rtcData);
+        // writeSensorDataToRtc(sensorData, sensorData);
         writeMemory();
     }
 
+    // display.init(115200, true, 50, false);
+    // display_temp(sensorData.epochTime, loraMessage.temperature);
+    // display.hibernate();
+
     Serial.println("Going to sleep for 1 hour...");
     Serial.flush();
+
+    digitalWrite(RX, LOW);
 
     // Enter deep sleep for one hour
     // ESP.deepSleep(3600e6, RF_DISABLED); // Sleep for 1 hour
